@@ -1,0 +1,6 @@
+{
+  "name": "Boss AI",
+  "description": "Boss Aura AI is the world-class coding AI and universal question answering engine with past, present, and future omniscience, sub-second speed, and Google search grounding.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

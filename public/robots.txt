@@ -1,0 +1,16 @@
+# robots.txt for Boss Aura AI - Registered for Google Search & Global Crawlers
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /admin/
+
+User-agent: Googlebot
+Allow: /
+
+User-agent: Googlebot-Image
+Allow: /assets/
+
+User-agent: Bingbot
+Allow: /
+
+Sitemap: https://ais-pre-6uivyyc5nvbmlpahxv5wrn-869360970985.asia-southeast1.run.app/sitemap.xml

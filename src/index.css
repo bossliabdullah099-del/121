@@ -1,0 +1,118 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1, h2, h3, .font-display {
+    font-family: 'Outfit', 'Plus Jakarta Sans', sans-serif;
+  }
+}
+
+/* Custom Gemini-style scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(156, 163, 175, 0.3);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(156, 163, 175, 0.5);
+}
+
+/* Gemini glowing gradient animations */
+@keyframes gemini-gradient {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.gemini-gradient-text {
+  background: linear-gradient(135deg, #4285f4 0%, #9b72cf 45%, #d96570 75%, #131314 100%);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.gemini-gradient-text-dark {
+  background: linear-gradient(135deg, #70a1ff 0%, #a29bfe 40%, #ff7675 75%, #fd79a8 100%);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.gemini-sparkle-border {
+  position: relative;
+  background-clip: padding-box;
+}
+
+/* Device Screen Aspect Ratio Standards */
+.aspect-16-10 {
+  aspect-ratio: 16 / 10;
+}
+.aspect-3-2 {
+  aspect-ratio: 3 / 2;
+}
+.aspect-4-3 {
+  aspect-ratio: 4 / 3;
+}
+.aspect-19-5-9 {
+  aspect-ratio: 19.5 / 9;
+}
+.aspect-18-9 {
+  aspect-ratio: 18 / 9;
+}
+
+/* Automatic Device Screen Aspect Ratio Adaptation (Without manual options) */
+
+/* 1. Desktop & Laptops: 16:10 (MacBook/PC) / 3:2 (Surface) */
+@media (min-width: 1024px) {
+  .ai-device-adaptive-view {
+    width: 100%;
+    margin-left: auto;
+    margin-right: auto;
+    transition: all 0.25s ease-in-out;
+  }
+}
+
+/* Widescreen 16:10 or 3:2 desktop displays */
+@media (min-width: 1024px) and (min-aspect-ratio: 14/10) {
+  .ai-device-adaptive-view {
+    max-width: 100%;
+  }
+}
+
+/* 2. Tablets / iPads: 4:3 (iPad) or 16:10 (Android/iPad Landscape) */
+@media (min-width: 768px) and (max-width: 1023px) {
+  .ai-device-adaptive-view {
+    width: 100%;
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+    transition: all 0.25s ease-in-out;
+  }
+}
+
+/* 3. Mobile Phones: 19.5:9 (iPhone 14/15/16, Galaxy S) or 18:9 (FullView) */
+@media (max-width: 767px) {
+  .ai-device-adaptive-view {
+    width: 100%;
+    padding-left: 0;
+    padding-right: 0;
+    margin: 0;
+    /* Height fits tall smartphone displays with safe area */
+    min-height: calc(100vh - 4rem);
+    min-height: calc(100dvh - 4rem);
+    transition: all 0.25s ease-in-out;
+  }
+}
+
