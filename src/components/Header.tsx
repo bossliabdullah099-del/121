@@ -15,6 +15,7 @@ import {
   Gift,
 } from 'lucide-react';
 import { User, ActiveTab } from '../types';
+import { isAdminUser } from '../lib/credits';
 
 interface HeaderProps {
   currentUser: User | null;
@@ -27,6 +28,7 @@ interface HeaderProps {
   onLogout: () => void;
   onOpenPolyglot?: () => void;
   credits?: number;
+  isAdmin?: boolean;
   onOpenDailyCredits?: () => void;
   onOpenPrivacy?: () => void;
 }
@@ -42,16 +44,18 @@ export const Header: React.FC<HeaderProps> = ({
   onLogout,
   onOpenPolyglot,
   credits = 15,
+  isAdmin = false,
   onOpenDailyCredits,
   onOpenPrivacy,
 }) => {
+  const effectiveIsAdmin = isAdmin || isAdminUser(currentUser);
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
-  const [selectedModel, setSelectedModel] = useState('BOSS AURA AI');
+  const [selectedModel, setSelectedModel] = useState('BOSS AURA AI · Gemini 4');
 
   const models = [
-    { name: 'BOSS AURA AI Polyglot', desc: 'Principal Engineer across all 30+ coding languages with direct, relevant answers', badge: 'Default' },
-    { name: 'BOSS AURA AI Pro (Reasoning)', desc: 'Deep algorithmic & architectural reasoning (Gemini Pro)', badge: 'Pro' },
-    { name: 'BOSS AURA AI Flash', desc: 'Ultra-fast low latency code & conversational engine', badge: 'Fast' },
+    { name: 'BOSS AURA AI · Gemini 4', desc: 'World Best Coder across 50+ code languages & 100+ global languages', badge: 'Default' },
+    { name: 'BOSS AURA AI · Architect', desc: 'Deep algorithmic O(n), security audit & full-stack system reasoning', badge: 'Coder Pro' },
+    { name: 'BOSS AURA AI · Turbo', desc: 'Sub-second token streaming with Google Search global grounding', badge: 'Instant' },
   ];
 
   return (
@@ -100,7 +104,7 @@ export const Header: React.FC<HeaderProps> = ({
               <Coins className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
               <span className="inline">Credit</span>
               <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-400 font-mono font-bold border border-amber-500/30">
-                {credits} CR
+                {effectiveIsAdmin ? '∞ Unlimited' : `${credits} CR`}
               </span>
             </button>
           )}

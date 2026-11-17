@@ -17,6 +17,7 @@ interface CodeOptionModalProps {
   onClose: () => void;
   promptText: string;
   credits: number;
+  isAdmin?: boolean;
   onChooseCredit: () => void;
   onChooseWatchAd: () => void;
   onOpenDailyCredits?: () => void;
@@ -28,6 +29,7 @@ export const CodeOptionModal: React.FC<CodeOptionModalProps> = ({
   onClose,
   promptText,
   credits,
+  isAdmin = false,
   onChooseCredit,
   onChooseWatchAd,
   onOpenDailyCredits,
@@ -35,7 +37,7 @@ export const CodeOptionModal: React.FC<CodeOptionModalProps> = ({
 }) => {
   if (!isOpen) return null;
 
-  const hasCredits = credits >= 1;
+  const hasCredits = isAdmin || credits >= 1;
   const isProgram = /\b(program|programs|programming|programme|programmes)\b/i.test(promptText);
   const term = isProgram ? 'Program' : 'Code';
 
@@ -82,10 +84,10 @@ export const CodeOptionModal: React.FC<CodeOptionModalProps> = ({
                 BOSS AURA AI • {isProgram ? 'Program Generation' : 'Code Generation'}
               </span>
               <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-                Required Option
+                Choose Option
               </span>
             </div>
-            <h3 className="text-lg font-bold">Write {term} with BOSS AURA AI</h3>
+            <h3 className="text-lg font-bold">Watch Ad or Get Code with Credit</h3>
           </div>
         </div>
 
@@ -104,12 +106,12 @@ export const CodeOptionModal: React.FC<CodeOptionModalProps> = ({
         </div>
 
         <p className="text-xs opacity-75 mb-4 text-center">
-          How would you like BOSS AURA AI to write this {term.toLowerCase()}? Choose one option:
+          BOSS AURA AI is ready to write this {term.toLowerCase()}. Choose <strong>Watch Ad</strong> or <strong>Get Code with Credit</strong>:
         </p>
 
         {/* Two Options Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5">
-          {/* Option 1: Give 1 Credit */}
+          {/* Option 1: Get Code with Credit */}
           <div
             onClick={() => {
               if (hasCredits) {
@@ -134,10 +136,12 @@ export const CodeOptionModal: React.FC<CodeOptionModalProps> = ({
                 </span>
               </div>
               <h4 className="text-sm font-bold mb-1 flex items-center gap-1.5">
-                <span>Write by 1 Credit</span>
+                <span>Get {term} with Credit</span>
               </h4>
               <p className="text-[11px] opacity-70 leading-relaxed mb-3">
-                Use 1 credit from your daily balance to generate {term.toLowerCase()} immediately with zero ads.
+                {isAdmin
+                  ? `Use your unlimited admin credit balance to get ${term.toLowerCase()} instantly with zero ads.`
+                  : `Use 1 credit from your balance to get this ${term.toLowerCase()} immediately with zero ads.`}
               </p>
             </div>
 
@@ -149,7 +153,7 @@ export const CodeOptionModal: React.FC<CodeOptionModalProps> = ({
                     hasCredits ? 'text-emerald-400' : 'text-red-400'
                   }`}
                 >
-                  {credits} Credits
+                  {isAdmin ? '∞ Unlimited (Admin)' : `${credits} Credits`}
                 </span>
               </div>
 
@@ -163,7 +167,7 @@ export const CodeOptionModal: React.FC<CodeOptionModalProps> = ({
                   className="w-full py-2 px-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-sm flex items-center justify-center gap-1.5 transition-all group-hover:scale-[1.02]"
                 >
                   <Zap className="w-3.5 h-3.5" />
-                  <span>Give 1 Credit & Write</span>
+                  <span>{isAdmin ? `Get ${term} (∞ Unlimited)` : `Get ${term} (1 Credit)`}</span>
                 </button>
               ) : (
                 <button
@@ -200,10 +204,10 @@ export const CodeOptionModal: React.FC<CodeOptionModalProps> = ({
                 </span>
               </div>
               <h4 className="text-sm font-bold mb-1 flex items-center gap-1.5">
-                <span>Watch Ad to Write</span>
+                <span>Watch Ad</span>
               </h4>
               <p className="text-[11px] opacity-70 leading-relaxed mb-3">
-                Watch a quick 5-second sponsor ad to write your {term.toLowerCase()} for free without using any credits.
+                Watch a quick 5-second sponsor ad to get your {term.toLowerCase()} for free without using any credits.
               </p>
             </div>
 
@@ -222,7 +226,7 @@ export const CodeOptionModal: React.FC<CodeOptionModalProps> = ({
                 className="w-full py-2 px-3 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-bold text-xs shadow-sm flex items-center justify-center gap-1.5 transition-all group-hover:scale-[1.02]"
               >
                 <Sparkles className="w-3.5 h-3.5 text-amber-200" />
-                <span>Watch Ad & Write {term}</span>
+                <span>Watch Ad & Get {term}</span>
               </button>
             </div>
           </div>

@@ -35,6 +35,7 @@ interface CodingStudioModalProps {
   isDarkMode: boolean;
   onOpenSandbox?: (code: string, language: string) => void;
   credits: number;
+  isAdmin?: boolean;
   onDeductCredit: (amount?: number) => boolean;
   onOpenDailyCredits?: () => void;
 }
@@ -60,6 +61,7 @@ export const CodingStudioModal: React.FC<CodingStudioModalProps> = ({
   isDarkMode,
   onOpenSandbox,
   credits,
+  isAdmin = false,
   onDeductCredit,
   onOpenDailyCredits,
 }) => {
@@ -125,16 +127,18 @@ export const CodingStudioModal: React.FC<CodingStudioModalProps> = ({
       customPrompt ||
       `Write a production-grade, idiomatic ${selectedLanguage.name} implementation of a high-performance system following modern enterprise best practices and strict type safety.`;
 
-    if (credits < 1) {
+    if (!isAdmin && credits < 1) {
       setGenerationNotice('Insufficient credits! You need 1 credit. Watch an ad for free or claim Daily Credits in top left.');
       setTimeout(() => setGenerationNotice(null), 4000);
       return;
     }
 
-    const deducted = onDeductCredit(1);
-    if (!deducted) {
-      setGenerationNotice('Credit deduction failed. Please check your credit balance.');
-      return;
+    if (!isAdmin) {
+      const deducted = onDeductCredit(1);
+      if (!deducted) {
+        setGenerationNotice('Credit deduction failed. Please check your credit balance.');
+        return;
+      }
     }
 
     executeCodeGeneration(targetPrompt, 'credit');
@@ -148,6 +152,8 @@ export const CodingStudioModal: React.FC<CodingStudioModalProps> = ({
 
     if (method === 'ad') {
       setGenerationNotice('🎉 Free Generation Granted via Ad! Generating code now...');
+    } else if (isAdmin) {
+      setGenerationNotice('⚡ Admin Unlimited Credits Active (∞). Generating code now...');
     } else {
       setGenerationNotice(`⚡ 1 Credit Deducted (Remaining: ${credits - 1} CR). Generating code now...`);
     }
@@ -246,9 +252,9 @@ export const CodingStudioModal: React.FC<CodingStudioModalProps> = ({
                 title="View Daily Credit Missions (Earn 10-120 Credits)"
               >
                 <Coins className="w-3.5 h-3.5 text-amber-500" />
-                <span>{credits} Credits</span>
+                <span>{isAdmin ? '∞ Unlimited' : `${credits} Credits`}</span>
                 <span className="text-[10px] bg-amber-500/20 px-1 rounded text-amber-400 font-mono">
-                  +Daily
+                  {isAdmin ? 'Admin' : '+Daily'}
                 </span>
               </button>
 
@@ -383,12 +389,12 @@ export const CodingStudioModal: React.FC<CodingStudioModalProps> = ({
               <button
                 onClick={() => handleWriteCodeByCredit()}
                 className="flex-1 md:flex-none px-4 py-2 rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-bold shadow-md flex items-center justify-center gap-2 transition-all hover:scale-[1.02] cursor-pointer"
-                title={`Write code instantly using 1 credit (Balance: ${credits} CR)`}
+                title={isAdmin ? 'Write code instantly with Admin Unlimited Credits (∞)' : `Write code instantly using 1 credit (Balance: ${credits} CR)`}
               >
                 <Zap className="w-4 h-4 text-yellow-300" />
                 <div className="flex flex-col text-left leading-tight">
-                  <span className="font-bold">Write Code by 1 Credit</span>
-                  <span className="text-[10px] text-blue-200 font-normal">Instant · 1 Credit</span>
+                  <span className="font-bold">{isAdmin ? 'Write Code (Unlimited)' : 'Write Code by 1 Credit'}</span>
+                  <span className="text-[10px] text-blue-200 font-normal">{isAdmin ? 'Instant · ∞ Admin' : 'Instant · 1 Credit'}</span>
                 </div>
               </button>
             </div>

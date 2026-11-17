@@ -9,6 +9,8 @@ import { FindChatModal } from './components/FindChatModal';
 import { CodingStudioModal } from './components/CodingStudioModal';
 import { DailyCreditModal } from './components/DailyCreditModal';
 import { CodeSandboxModal } from './components/CodeSandboxModal';
+import { CodeOptionModal } from './components/CodeOptionModal';
+import { WatchAdModal } from './components/WatchAdModal';
 import { PrivacyPolicyModal } from './components/PrivacyPolicyModal';
 import { User, ActiveTab, ChatMessage, ChatConversation, AttachedMedia } from './types';
 import {
@@ -21,6 +23,7 @@ import {
   HOURLY_REQUIRED_SECONDS,
   isHourlyClaimAvailable,
   isGuestUser,
+  isAdminUser,
 } from './lib/credits';
 import {
   saveConversationToFirestore,
@@ -89,6 +92,9 @@ export default function App() {
   const [isSandboxOpen, setIsSandboxOpen] = useState(false);
   const [sandboxCode, setSandboxCode] = useState('console.log("Hello from BOSS AURA AI Coding Engine!");');
   const [sandboxLanguage, setSandboxLanguage] = useState('javascript');
+  const [isCodeOptionOpen, setIsCodeOptionOpen] = useState(false);
+  const [pendingCodePrompt, setPendingCodePrompt] = useState('');
+  const [isWatchingAdForCode, setIsWatchingAdForCode] = useState(false);
   const [isPrivacyOpen, setIsPrivacyOpen] = useState(false);
   const [showPrivacyNotice, setShowPrivacyNotice] = useState<boolean>(() => {
     try {
@@ -153,7 +159,9 @@ export default function App() {
   };
 
   // Deduct Credit (for Coding Studio: "Write code by 1 credit")
+  // Admin accounts have unlimited credits and are never deducted
   const handleDeductCredit = (amount = 1): boolean => {
+    if (isAdminUser(currentUser)) return true;
     if (creditState.credits < amount) return false;
     setCreditState((prev) => {
       const updated: DailyCreditState = {
@@ -235,6 +243,32 @@ export default function App() {
   });
 
   const [isLoading, setIsLoading] = useState(false);
+  const [preferredLanguage, setPreferredLanguage] = useState<string>(() => {
+    try {
+      return localStorage.getItem('boss_ai_preferred_lang') || 'auto';
+    } catch {
+      return 'auto';
+    }
+  });
+  const [codingMode, setCodingMode] = useState<string>(() => {
+    try {
+      return localStorage.getItem('boss_ai_coding_mode') || 'coder';
+    } catch {
+      return 'coder';
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('boss_ai_preferred_lang', preferredLanguage);
+    } catch {}
+  }, [preferredLanguage]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('boss_ai_coding_mode', codingMode);
+    } catch {}
+  }, [codingMode]);
 
   // Sync dark mode
   useEffect(() => {
@@ -483,6 +517,8 @@ export default function App() {
           attachedVideo: attachedVideo || undefined,
           attachedMedia: attachedMedia || undefined,
           model: 'BOSS AURA AI',
+          codingMode,
+          preferredLanguage,
           stream: !isMediaAttachment,
           history: currentMessages.slice(-8),
           userInfo: {
@@ -492,6 +528,13 @@ export default function App() {
             isSuperAdmin: currentUser?.isSuperAdmin || false,
           },
           userPastConversations: pastChatSummaries,
+          userTimeZone: (() => {
+            try {
+              return Intl.DateTimeFormat().resolvedOptions().timeZone;
+            } catch {
+              return undefined;
+            }
+          })(),
         }),
       });
 
@@ -560,11 +603,51 @@ export default function App() {
           }
         }
 
+        // If stream closed before emitting text, fetch a direct non-streaming reply
+        if (!fullReply.trim()) {
+          try {
+            const directRes = await fetch('/api/chat', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                message: text,
+                model: 'BOSS AURA AI',
+                codingMode,
+                preferredLanguage,
+                stream: false,
+                history: currentMessages.slice(-8),
+                userInfo: {
+                  email: userEmail,
+                  name: currentUser?.name || (userEmail.includes('@') ? userEmail.split('@')[0] : 'Creator'),
+                  role: currentUser?.role || 'user',
+                  isSuperAdmin: currentUser?.isSuperAdmin || false,
+                },
+                userPastConversations: pastChatSummaries,
+                userTimeZone: (() => {
+                  try {
+                    return Intl.DateTimeFormat().resolvedOptions().timeZone;
+                  } catch {
+                    return undefined;
+                  }
+                })(),
+              }),
+            });
+            const directData = await directRes.json();
+            if (directData?.reply) {
+              fullReply = directData.reply;
+              if (directData.modelUsed) modelUsed = directData.modelUsed;
+              if (Array.isArray(directData.sources) && directData.sources.length > 0) {
+                streamSources = directData.sources;
+              }
+            }
+          } catch (_e) {}
+        }
+
         // Persist final stream message to Firestore if user is authenticated
         const finalAssistantMsg: ChatMessage = {
           id: assistantMsgId,
           role: 'assistant',
-          content: fullReply,
+          content: fullReply || 'I could not complete that response due to a temporary connection issue. Please try asking again.',
           timestamp: Date.now(),
           modelUsed,
           sources: streamSources,
@@ -747,14 +830,16 @@ export default function App() {
             const userInitKey = `boss_user_init_${u.id}`;
             if (!localStorage.getItem(userInitKey)) {
               localStorage.setItem(userInitKey, 'true');
-              setCreditState((prev) => {
-                const updated = {
-                  ...prev,
-                  credits: 0,
-                };
-                saveDailyCreditState(updated, u.email || u.id);
-                return updated;
-              });
+              if (!isAdminUser(u)) {
+                setCreditState((prev) => {
+                  const updated = {
+                    ...prev,
+                    credits: 0,
+                  };
+                  saveDailyCreditState(updated, u.email || u.id);
+                  return updated;
+                });
+              }
             }
           }}
           isDarkMode={isDarkMode}
@@ -791,6 +876,7 @@ export default function App() {
         onLogout={handleLogout}
         onOpenPolyglot={() => setIsPolyglotOpen(true)}
         credits={creditState.credits}
+        isAdmin={isAdminUser(currentUser)}
         onOpenDailyCredits={() => setIsDailyCreditOpen(true)}
         onOpenPrivacy={() => setIsPrivacyOpen(true)}
       />
@@ -815,6 +901,7 @@ export default function App() {
           currentUser={currentUser}
           isDarkMode={isDarkMode}
           credits={creditState.credits}
+          isAdmin={isAdminUser(currentUser)}
           onOpenDailyCredits={() => setIsDailyCreditOpen(true)}
           onOpenPrivacy={() => setIsPrivacyOpen(true)}
           onOpenAuth={() => setIsAuthOpen(true)}
@@ -833,9 +920,14 @@ export default function App() {
             onOpenFindChat={() => setIsFindChatOpen(true)}
             onRenameConversation={handleRenameConversation}
             credits={creditState.credits}
+            isAdmin={isAdminUser(currentUser)}
             onOpenDailyCredits={() => setIsDailyCreditOpen(true)}
             onDeductCredit={handleDeductCredit}
             onOpenAuth={() => setIsAuthOpen(true)}
+            preferredLanguage={preferredLanguage}
+            setPreferredLanguage={setPreferredLanguage}
+            codingMode={codingMode}
+            setCodingMode={setCodingMode}
           />
         </main>
       </div>
@@ -881,18 +973,20 @@ export default function App() {
           }
           setCurrentUser(u);
           setIsAuthOpen(false);
-          // Ensure zero starting credits on guest mode and fresh sign in as requested
+          // Ensure zero starting credits on guest mode and regular sign in; admins retain unlimited credits
           const userInitKey = `boss_user_init_${u.id}`;
           if (!localStorage.getItem(userInitKey)) {
             localStorage.setItem(userInitKey, 'true');
-            setCreditState((prev) => {
-              const updated = {
-                ...prev,
-                credits: 0, // Zero starting credit
-              };
-              saveDailyCreditState(updated, u.email || u.id);
-              return updated;
-            });
+            if (!isAdminUser(u)) {
+              setCreditState((prev) => {
+                const updated = {
+                  ...prev,
+                  credits: 0, // Zero starting credit
+                };
+                saveDailyCreditState(updated, u.email || u.id);
+                return updated;
+              });
+            }
           }
         }}
         isDarkMode={isDarkMode}
@@ -926,7 +1020,8 @@ export default function App() {
         isOpen={isPolyglotOpen}
         onClose={() => setIsPolyglotOpen(false)}
         onSelectPrompt={(p) => {
-          handleSendMessage(p);
+          setPendingCodePrompt(p);
+          setIsCodeOptionOpen(true);
         }}
         isDarkMode={isDarkMode}
         onOpenSandbox={(code, lang) => {
@@ -935,6 +1030,7 @@ export default function App() {
           setIsSandboxOpen(true);
         }}
         credits={creditState.credits}
+        isAdmin={isAdminUser(currentUser)}
         onDeductCredit={handleDeductCredit}
         onOpenDailyCredits={() => setIsDailyCreditOpen(true)}
       />
@@ -947,8 +1043,54 @@ export default function App() {
         initialLanguage={sandboxLanguage}
         isDarkMode={isDarkMode}
         onAskBossAiToFix={(brokenCode, errorMsg) => {
-          handleSendMessage(`Please fix this runtime error in my ${sandboxLanguage.toUpperCase()} code:\n\nError: ${errorMsg}\n\nCode:\n\`\`\`${sandboxLanguage}\n${brokenCode}\n\`\`\``);
+          setPendingCodePrompt(
+            `Please fix this runtime error in my ${sandboxLanguage.toUpperCase()} code:\n\nError: ${errorMsg}\n\nCode:\n\`\`\`${sandboxLanguage}\n${brokenCode}\n\`\`\``
+          );
+          setIsSandboxOpen(false);
+          setIsCodeOptionOpen(true);
         }}
+      />
+
+      {/* Code Option Modal (Watch Ad or Get Code with Credit) */}
+      <CodeOptionModal
+        isOpen={isCodeOptionOpen}
+        onClose={() => setIsCodeOptionOpen(false)}
+        promptText={pendingCodePrompt}
+        credits={creditState.credits}
+        isAdmin={isAdminUser(currentUser)}
+        onChooseCredit={() => {
+          if (!isAdminUser(currentUser) && creditState.credits < 1) {
+            setIsDailyCreditOpen(true);
+            return;
+          }
+          if (!isAdminUser(currentUser) && !handleDeductCredit(1)) {
+            return;
+          }
+          const p = pendingCodePrompt;
+          setIsCodeOptionOpen(false);
+          setPendingCodePrompt('');
+          if (p) handleSendMessage(p);
+        }}
+        onChooseWatchAd={() => {
+          setIsCodeOptionOpen(false);
+          setIsWatchingAdForCode(true);
+        }}
+        onOpenDailyCredits={() => setIsDailyCreditOpen(true)}
+        isDarkMode={isDarkMode}
+      />
+
+      {/* Watch Ad Modal for Free Code Generation */}
+      <WatchAdModal
+        isOpen={isWatchingAdForCode}
+        onClose={() => setIsWatchingAdForCode(false)}
+        onAdCompleted={() => {
+          setIsWatchingAdForCode(false);
+          const p = pendingCodePrompt;
+          setPendingCodePrompt('');
+          if (p) handleSendMessage(p);
+        }}
+        isDarkMode={isDarkMode}
+        purpose="Get Code with BOSS AURA AI"
       />
 
       {/* Privacy Policy Pop-up Notice (Toast Banner) */}

@@ -20,7 +20,7 @@ import {
   ShieldAlert,
 } from 'lucide-react';
 import { ActiveTab, User, ChatConversation } from '../types';
-import { isGuestUser } from '../lib/credits';
+import { isGuestUser, isAdminUser } from '../lib/credits';
 
 interface SidebarProps {
   isOpen: boolean;
@@ -39,6 +39,7 @@ interface SidebarProps {
   currentUser: User | null;
   isDarkMode: boolean;
   credits?: number;
+  isAdmin?: boolean;
   onOpenDailyCredits?: () => void;
   onOpenPrivacy?: () => void;
   onOpenAuth?: () => void;
@@ -61,10 +62,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
   currentUser,
   isDarkMode,
   credits = 15,
+  isAdmin = false,
   onOpenDailyCredits,
   onOpenPrivacy,
   onOpenAuth,
 }) => {
+  const effectiveIsAdmin = isAdmin || isAdminUser(currentUser);
   const [inlineFilter, setInlineFilter] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
@@ -208,7 +211,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <div className="flex items-center justify-between w-full">
                 <span className="truncate font-semibold">Credit</span>
                 <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-500/20 font-mono font-bold text-amber-400">
-                  {credits} CR
+                  {effectiveIsAdmin ? '∞ Unlimited' : `${credits} CR`}
                 </span>
               </div>
             )}

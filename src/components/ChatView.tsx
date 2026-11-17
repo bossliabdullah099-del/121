@@ -14,7 +14,6 @@ import {
   User as UserIcon,
   Download,
   Image as ImageIcon,
-  Code,
   Code2,
   X,
   Plus,
@@ -32,7 +31,7 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import { ChatMessage, User, ActiveTab, ChatConversation, AttachedMedia } from '../types';
-import { isGuestUser } from '../lib/credits';
+import { isGuestUser, isAdminUser } from '../lib/credits';
 import { CodeBlock } from './CodeBlock';
 import { CodingStudioModal } from './CodingStudioModal';
 import { CodeSandboxModal } from './CodeSandboxModal';
@@ -45,45 +44,89 @@ import {
   CodeFile,
 } from '../lib/zipExporter';
 
-// Helper to detect if user prompt is asking to write or generate code or a program
-export const isCodeWritingPrompt = (text: string): boolean => {
+// Helper to detect if user prompt is asking the AI to give, write, generate, build, or debug source code/programs.
+// Conceptual or general questions (e.g., "What is coding?", "Why is Python popular?", "Explain HTTP status code 404")
+// must ALWAYS return false so the AI answers general questions directly.
+export const isCodeWritingPrompt = (text: string, history?: ChatMessage[]): boolean => {
   if (!text || !text.trim()) return false;
   const t = text.trim().toLowerCase();
 
-  // 1. Any prompt asking for / mentioning a program or programming (e.g. "c++ program", "program for fibonacci", "write a program", "give me program", "program to calculate...", "ask program", "simple program", "program of...")
+  // Exclude non-programming uses of "code" / "program" (e.g., zip code, status code, space program)
+  const sanitized = t
+    .replace(/\b(zip|postal|pin|area|country|calling|dialing|promo|coupon|discount|qr|bar|status|http|error|dress|cheat|morse|airport|airport|ascii|unicode)\s+codes?\b/gi, '')
+    .replace(/\b(space|tv|television|loyalty|rewards?|degree|fitness|workout|training|affiliate|referral|mentor|internship|fellowship)\s+programs?\b/gi, '');
+
+  // Direct code snippets pasted for fixing, reviewing, optimizing, or explaining/modifying
   if (
-    /\b(program|programs|programming|programme|programmes)\b/i.test(t) &&
-    !/\b(gym|workout|diet|exercise|fitness|tv\s+program|television\s+program)\b/i.test(t)
+    /```/.test(t) ||
+    /\bdef\s+[a-zA-Z0-9_]+\s*\(/i.test(t) ||
+    /\bfunction\s+[a-zA-Z0-9_]*\s*\(/i.test(t) ||
+    /\b#include\s*<[a-zA-Z0-9_.]+>/i.test(t) ||
+    /\bpublic\s+class\s+[a-zA-Z0-9_]+/i.test(t) ||
+    /\bimport\s+.*\s+from\s+['"]/i.test(t) ||
+    /<!doctype\s+html>|<html[\s>]/i.test(t) ||
+    /\bselect\s+.+\s+from\s+[a-zA-Z0-9_]+/i.test(t)
   ) {
     return true;
   }
 
-  // 2. Any prompt with "code", "coding", "coder"
-  if (/\b(code|codes|coding|codebase)\b/i.test(t)) {
+  const progLangRegex =
+    /\b(python|py|javascript|js|typescript|ts|java|c\+\+|cpp|c#|csharp|rust|go|golang|php|ruby|html|html5|css|css3|tailwind|sql|mysql|postgresql|postgres|sqlite|swift|kotlin|react|nextjs|next\.js|node|nodejs|express|vue|angular|svelte|flutter|dart|bash|shell|powershell|assembly|matlab|scala|perl|lua|haskell|elixir|solidity|r\s+script|c\s+program|c\s+language)\b/i;
+
+  const codeArtifactRegex =
+    /\b(code|codes|coding|source\s+code|codebase|script|scripts|program|programs|programme|function|functions|method|class|component|components|hook|hooks|app|apps|application|website|web\s*app|webpage|landing\s+page|portfolio|dashboard|form|navbar|sidebar|modal|calculator|game|snake\s+game|todo|timer|stopwatch|chatbot|bot|api|endpoint|backend|frontend|server|algorithm|algorithms|query|queries|regex|regular\s+expression|dockerfile|makefile|unit\s+test|tests|snippet|template|layout|shader|smart\s+contract|bug|bugs|syntax\s+error|runtime\s+error)\b/i;
+
+  const genVerbRegex =
+    /\b(write|create|generate|make|build|implement|develop|fix|debug|refactor|convert|translate|optimize|improve|update|modify|edit|add|give|show|provide|send|need|want|code|program|script|design|solve|output|draft|craft|prepare)\b/i;
+
+  // "How to write/make/build/create/code ..." with a coding artifact or language is asking for code
+  const isHowToCodeRequest =
+    /\bhow\s+(to|do\s+i|can\s+i)\s+(write|create|make|build|code|implement|program|fix|debug|develop|generate)\b/i.test(sanitized) &&
+    (codeArtifactRegex.test(sanitized) || progLangRegex.test(sanitized));
+
+  if (isHowToCodeRequest) {
     return true;
   }
 
-  // 3. Action verbs asking for code, program, script, function, etc.
-  const codePatterns = [
-    /\b(write|create|generate|make|build|code|implement|develop|fix|debug|refactor|convert|give|show|provide|need|ask)\s+(me\s+)?(a\s+|an\s+|the\s+|some\s+)?(code|script|program|programme|function|component|app|algorithm|api|class|query|website|page|backend|frontend|server|bot)\b/i,
-    /\b(write|create|generate|make|build|code|implement|give|show|need|ask)\s+(in\s+|using\s+|with\s+)?(python|javascript|typescript|java|c\+\+|cpp|c#|csharp|rust|go|golang|php|ruby|html|css|sql|swift|kotlin|react|node|vue|flutter|dart)\b/i,
-    /\b(python|javascript|typescript|java|c\+\+|cpp|c#|rust|golang|sql|react|vue|html|css|c)\s+(code|program|script|function|app|project)\b/i,
-    /\b(code|program|script)\s+(to|that|for|which|in|of|on|about)\b/i,
-    /\bhow\s+to\s+(code|program|build\s+a|create\s+a|write\s+a|implement)\b/i,
-    /```/,
-    /\bdef\s+[a-zA-Z0-9_]+\s*\(/i,
-    /\bfunction\s+[a-zA-Z0-9_]*\s*\(/i,
-    /\b#include\s*<[a-zA-Z0-9_.]+>/i,
-    /\bpublic\s+class\s+[a-zA-Z0-9_]+/i,
-    /\bimport\s+.*\s+from\s+['"]/i,
-  ];
+  // Pure conceptual/informational questions (unless explicitly asking to give/write/show code)
+  const isConceptualQuestion =
+    /^(what\s+is|what\s+are|what\s+does|who\s+is|who\s+invented|who\s+created|when\s+was|where\s+is|why\s+is|why\s+do|why\s+does|explain|define|describe|tell\s+me\s+about|difference\s+between|compare|meaning\s+of|can\s+you\s+explain|is\s+coding|is\s+programming|history\s+of)\b/i.test(sanitized) ||
+    /\b(kya\s+hai|kya\s+hota\s+hai|kya\s+hoti\s+hai|kyun\s+use\s+karte)\b/i.test(sanitized);
 
-  for (const p of codePatterns) {
-    if (p.test(t)) return true;
+  const asksForCodeExplicitly =
+    /\b(give|write|show|send|provide|generate|create|make|build|fix|debug|refactor|convert)\s+(me\s+)?(the\s+|a\s+|an\s+|some\s+|example\s+)?(code|program|script|function|snippet|implementation|solution)\b/i.test(sanitized) ||
+    /\b(with\s+code|code\s+example|example\s+code|code\s+for|code\s+to|program\s+for|program\s+to|script\s+for|script\s+to|in\s+code)\b/i.test(sanitized);
+
+  if (isConceptualQuestion && !asksForCodeExplicitly) {
+    return false;
   }
 
-  if ((t.includes('code') || t.includes('program')) && /\b(write|give|create|build|make|generate|provide|show|need|help|ask)\b/i.test(t)) {
+  if (asksForCodeExplicitly) {
     return true;
+  }
+
+  // Action verb + code artifact or programming language
+  if (genVerbRegex.test(sanitized) && (codeArtifactRegex.test(sanitized) || progLangRegex.test(sanitized))) {
+    return true;
+  }
+
+  // Shorthand code requests without explicit verb (e.g., "python snake game", "react login form", "bubble sort in c++")
+  if (progLangRegex.test(sanitized) && (codeArtifactRegex.test(sanitized) || /\b(in|using|with)\s+/i.test(sanitized) || sanitized.split(/\s+/).length <= 7)) {
+    return true;
+  }
+
+  // Follow-up modification / continuation inside an active coding conversation
+  if (Array.isArray(history) && history.length > 0) {
+    const lastAssistant = [...history].reverse().find((m) => m.role !== 'user');
+    if (lastAssistant && /```/.test(lastAssistant.content || '')) {
+      const followUpCodeEdit =
+        /\b(add|change|update|modify|fix|convert|refactor|optimize|remove|replace|make\s+it|put\s+it|export|zip|dark\s+mode|responsive|validation|error\s+handling|comments|full\s+code|complete\s+code|next\s+part|continue|another\s+example)\b/i.test(
+          sanitized
+        );
+      if (followUpCodeEdit) {
+        return true;
+      }
+    }
   }
 
   return false;
@@ -101,9 +144,14 @@ interface ChatViewProps {
   onOpenFindChat?: () => void;
   onRenameConversation?: (id: string, newTitle: string) => void;
   credits?: number;
+  isAdmin?: boolean;
   onOpenDailyCredits?: () => void;
   onDeductCredit?: (amount?: number) => boolean;
   onOpenAuth?: () => void;
+  preferredLanguage?: string;
+  setPreferredLanguage?: (lang: string) => void;
+  codingMode?: string;
+  setCodingMode?: (mode: string) => void;
 }
 
 export const ChatView: React.FC<ChatViewProps> = ({
@@ -117,10 +165,16 @@ export const ChatView: React.FC<ChatViewProps> = ({
   onOpenFindChat,
   onRenameConversation,
   credits = 0,
+  isAdmin = false,
   onOpenDailyCredits,
   onDeductCredit = () => true,
   onOpenAuth,
+  preferredLanguage = 'auto',
+  setPreferredLanguage,
+  codingMode = 'coder',
+  setCodingMode,
 }) => {
+  const effectiveIsAdmin = isAdmin || isAdminUser(currentUser);
   const [input, setInput] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [isListening, setIsListening] = useState(false);
@@ -250,25 +304,25 @@ export const ChatView: React.FC<ChatViewProps> = ({
     const textToSend = trimmed || defaultPrompt;
     const mediaToSend = attachedMedia;
 
-    // Check if user is asking to write code:
-    if (isCodeWritingPrompt(textToSend)) {
+    // Always ask Watch Ad or Get Code with Credit whenever the AI is going to give code
+    if (isCodeWritingPrompt(textToSend, messages)) {
       setPendingCodePrompt(textToSend);
       setPendingCodeMedia(mediaToSend);
       setIsCodeOptionOpen(true);
       return;
     }
 
-    // Normal non-code prompt: send directly
+    // Normal question: send directly
     executeSendMessage(textToSend, mediaToSend);
   };
 
-  // Option 1: Give 1 Credit to write code
+  // Option 1: Give 1 Credit to write code (Unlimited for Admin)
   const handleProceedWithCredit = () => {
-    if (credits < 1) {
+    if (!effectiveIsAdmin && credits < 1) {
       if (onOpenDailyCredits) onOpenDailyCredits();
       return;
     }
-    if (onDeductCredit) {
+    if (!effectiveIsAdmin && onDeductCredit) {
       const ok = onDeductCredit(1);
       if (!ok) return;
     }
@@ -334,10 +388,27 @@ export const ChatView: React.FC<ChatViewProps> = ({
     }
 
     try {
+      const speechLangMap: Record<string, string> = {
+        'Urdu (اردو)': 'ur-PK',
+        'Roman Urdu': 'ur-PK',
+        'Hindi (हिन्दी)': 'hi-IN',
+        'Arabic (العربية)': 'ar-SA',
+        'Spanish (Español)': 'es-ES',
+        'French (Français)': 'fr-FR',
+        'German (Deutsch)': 'de-DE',
+        'Portuguese (Português)': 'pt-BR',
+        'Chinese (中文)': 'zh-CN',
+        'Japanese (日本語)': 'ja-JP',
+        'Korean (한국어)': 'ko-KR',
+        'Turkish (Türkçe)': 'tr-TR',
+        'Indonesian (Bahasa Indonesia)': 'id-ID',
+        'Russian (Русский)': 'ru-RU',
+        English: 'en-US',
+      };
       const recognition = new SpeechRecognition();
       recognition.continuous = false;
       recognition.interimResults = false;
-      recognition.lang = 'en-US';
+      recognition.lang = speechLangMap[preferredLanguage] || navigator.language || 'en-US';
 
       recognition.onstart = () => setIsListening(true);
       recognition.onend = () => setIsListening(false);
@@ -474,7 +545,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
               <Coins className="w-3.5 h-3.5 text-amber-400" />
               <span className="hidden sm:inline">Daily Credit</span>
               <span className="px-1.5 py-0.2 rounded-full text-[9px] bg-amber-500/20 text-amber-300 font-mono font-bold">
-                {credits} CR
+                {effectiveIsAdmin ? '∞ Unlimited' : `${credits} CR`}
               </span>
             </button>
           )}
@@ -553,38 +624,51 @@ export const ChatView: React.FC<ChatViewProps> = ({
                 </span>
               </h1>
 
-              <div className="flex items-center gap-2 mb-2">
+              <div className="flex flex-wrap items-center justify-center gap-2 mb-2">
                 <span className="text-xs sm:text-sm font-bold tracking-wide uppercase px-2.5 py-0.5 rounded-md bg-blue-500/10 text-blue-400 border border-blue-500/20">
-                  Best Coder & Answer of Question
+                  Worldwide AI & World's Best Coder
+                </span>
+                <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                  100+ Global Languages · 50+ Code Languages
                 </span>
               </div>
 
-              <p className="text-xs sm:text-sm text-gray-400 max-w-lg mt-1 mb-4 leading-relaxed">
-                Universal Intelligence answering questions across past, present, and future with <span className="text-blue-400 font-semibold">sub-second speed</span> and live search grounding.
+              <p className="text-xs sm:text-sm text-gray-400 max-w-xl mt-1 mb-4 leading-relaxed">
+                Principal-grade software engineering, optimal $O(n)$ algorithms, zero-bug full-stack apps, and real-time universal knowledge across <span className="text-blue-400 font-semibold">every language on Earth</span>.
               </p>
 
-              {/* Universal Omniscience Quick Starters (Universe Today, Cosmic Past, Deep Future) */}
-              <div className="flex flex-wrap items-center justify-center gap-2 max-w-2xl mb-3 px-2">
+              {/* Worldwide & World Best Coder Quick Starters */}
+              <div className="flex flex-wrap items-center justify-center gap-2 max-w-3xl mb-3 px-2">
                 {[
                   {
+                    label: '⚡ Full-Stack App',
+                    sub: 'Production Multi-File Code',
+                    prompt: 'Architect and write a complete, production-ready full-stack web app using TypeScript, React, and Express with clean file paths so I can run and export as ZIP: ',
+                  },
+                  {
+                    label: '🧠 Optimal Algorithm',
+                    sub: 'Grandmaster O(n) Solution',
+                    prompt: 'Solve this problem with mathematically optimal Time and Space complexity, full edge-case handling, and Big-O complexity proof: ',
+                  },
+                  {
+                    label: '🛡️ Debug & Audit',
+                    sub: 'Fix Bugs & Security Audit',
+                    prompt: 'Perform a root-cause bug analysis and OWASP security audit on this code, then output the complete patched production version: ',
+                  },
+                  {
                     label: '🌌 Universe Today',
-                    sub: 'Live Space & Astronomy',
+                    sub: 'Live Space & Global Knowledge',
                     prompt: 'What is happening in the universe today? Explain current astronomical discoveries, JWST updates, space weather, and missions.',
                   },
                   {
-                    label: '⏳ Cosmic Past',
-                    sub: 'Big Bang to Civilization',
-                    prompt: 'Explain the complete chronological timeline of the universe from the Big Bang to human civilization.',
+                    label: '📈 Live Markets',
+                    sub: 'Stocks, Crypto, Gold & FX',
+                    prompt: 'Give me the live prices right now for AAPL, NVDA, Bitcoin (BTC), Gold, and USD/PKR exchange rate.',
                   },
                   {
-                    label: '🚀 Deep Future',
-                    sub: '2026 to 10¹⁰⁰ Years',
-                    prompt: 'What will happen in the universe from 2026 to the Heat Death (10¹⁰⁰ years)? Explain the full future timeline.',
-                  },
-                  {
-                    label: '🪐 Laws of Reality',
-                    sub: 'Physics & Cosmos',
-                    prompt: 'Explain the fundamental laws of physics that govern all matter, energy, spacetime, and the universe.',
+                    label: '🏦 Private Valuations',
+                    sub: 'DCF, Comps & Startup Rounds',
+                    prompt: 'Give me a private valuation for a SaaS startup with $12M ARR, 65% YoY growth, 78% gross margin, $2M EBITDA, $3M cash, and $1M debt — plus SpaceX latest private valuation.',
                   },
                 ].map((item) => (
                   <button
@@ -1116,73 +1200,75 @@ export const ChatView: React.FC<ChatViewProps> = ({
               value={input}
               onChange={handleInputChange}
               onKeyDown={handleKeyDown}
-              placeholder="Ask something to Boss Aura"
+              placeholder="Ask anything or request production code in 50+ languages..."
               rows={1}
-              className={`w-full px-5 pt-3.5 pb-12 rounded-3xl resize-none bg-transparent outline-none text-base sm:text-sm placeholder:opacity-50 leading-relaxed ${
+              className={`w-full px-5 pt-3.5 pb-2 rounded-t-3xl resize-none bg-transparent outline-none text-base sm:text-sm placeholder:opacity-50 leading-relaxed ${
                 isDarkMode ? 'text-white' : 'text-gray-900'
               }`}
             />
 
-            {/* Action buttons inside input box */}
-            <div className="absolute left-3 bottom-2.5 flex items-center gap-1">
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className={`p-2 rounded-full transition-colors ${
-                  attachedMedia
-                    ? attachedMedia.type === 'video'
-                      ? 'bg-purple-500/20 text-purple-400'
-                      : 'bg-emerald-500/20 text-emerald-400'
-                    : 'hover:bg-gray-500/10 text-gray-400 hover:text-purple-400'
-                }`}
-                title="Attach picture or video for BOSS AURA AI to learn, inspect, and answer"
-              >
-                <Paperclip className="w-4 h-4" />
-              </button>
-              <button
-                type="button"
-                onClick={toggleSpeechRecognition}
-                className={`p-2 rounded-full transition-colors ${
-                  isListening
-                    ? 'bg-red-500/20 text-red-400 animate-pulse'
-                    : 'hover:bg-gray-500/10 text-gray-400 hover:text-gray-200'
-                }`}
-                title={isListening ? 'Stop listening' : 'Voice dictation'}
-              >
-                {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-              </button>
-            </div>
+            {/* Responsive Non-Overlapping Composer Toolbar */}
+            <div className="flex flex-wrap items-center justify-between gap-2 px-3 pb-2.5 pt-1">
+              <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className={`p-2 rounded-full transition-colors ${
+                    attachedMedia
+                      ? attachedMedia.type === 'video'
+                        ? 'bg-purple-500/20 text-purple-400'
+                        : 'bg-emerald-500/20 text-emerald-400'
+                      : 'hover:bg-gray-500/10 text-gray-400 hover:text-purple-400'
+                  }`}
+                  title="Attach picture or video for BOSS AURA AI to learn, inspect, and answer"
+                >
+                  <Paperclip className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={toggleSpeechRecognition}
+                  className={`p-2 rounded-full transition-colors ${
+                    isListening
+                      ? 'bg-red-500/20 text-red-400 animate-pulse'
+                      : 'hover:bg-gray-500/10 text-gray-400 hover:text-gray-200'
+                  }`}
+                  title={isListening ? 'Stop listening' : 'Voice dictation'}
+                >
+                  {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                </button>
+              </div>
 
-            <div className="absolute right-3 bottom-2.5 flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setIsPolyglotOpen(true)}
-                className={`hidden xs:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-all ${
-                  isDarkMode
-                    ? 'bg-blue-500/10 hover:bg-blue-500/20 text-blue-300 border-blue-500/30'
-                    : 'bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200'
-                }`}
-                title="Write Code or Program: Watch Ad or 1 Credit"
-              >
-                <Code2 className="w-3 h-3 text-blue-400" />
-                <span>Code / Program</span>
-                <span className="text-[9px] px-1 py-0.2 rounded font-mono font-bold bg-blue-500/20 text-blue-300">
-                  Ad / 1 CR
-                </span>
-              </button>
-              <button
-                type="submit"
-                id="send-message-btn"
-                disabled={(!input.trim() && !attachedMedia) || isLoading}
-                className={`p-2 rounded-full transition-all ${
-                  (input.trim() || attachedMedia) && !isLoading
-                    ? 'bg-emerald-600 text-white hover:bg-emerald-500 shadow-sm scale-105 cursor-pointer'
-                    : 'bg-gray-500/20 text-gray-400 cursor-not-allowed'
-                }`}
-                title="Send message"
-              >
-                <Send className="w-4 h-4" />
-              </button>
+              <div className="flex items-center gap-2 ml-auto shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setIsPolyglotOpen(true)}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-all ${
+                    isDarkMode
+                      ? 'bg-blue-500/10 hover:bg-blue-500/20 text-blue-300 border-blue-500/30'
+                      : 'bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200'
+                  }`}
+                  title="Write Code or Program: Watch Ad or 1 Credit"
+                >
+                  <Code2 className="w-3 h-3 text-blue-400" />
+                  <span>Code / Program</span>
+                  <span className="hidden sm:inline text-[9px] px-1 py-0.2 rounded font-mono font-bold bg-blue-500/20 text-blue-300">
+                    Ad / 1 CR
+                  </span>
+                </button>
+                <button
+                  type="submit"
+                  id="send-message-btn"
+                  disabled={(!input.trim() && !attachedMedia) || isLoading}
+                  className={`p-2 rounded-full transition-all ${
+                    (input.trim() || attachedMedia) && !isLoading
+                      ? 'bg-emerald-600 text-white hover:bg-emerald-500 shadow-sm scale-105 cursor-pointer'
+                      : 'bg-gray-500/20 text-gray-400 cursor-not-allowed'
+                  }`}
+                  title="Send message"
+                >
+                  <Send className="w-4 h-4" />
+                </button>
+              </div>
             </div>
           </form>
         </div>
@@ -1217,6 +1303,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
         onClose={() => setIsCodeOptionOpen(false)}
         promptText={pendingCodePrompt}
         credits={credits}
+        isAdmin={effectiveIsAdmin}
         onChooseCredit={handleProceedWithCredit}
         onChooseWatchAd={handleProceedWithWatchAd}
         onOpenDailyCredits={onOpenDailyCredits}
@@ -1241,7 +1328,9 @@ export const ChatView: React.FC<ChatViewProps> = ({
         isOpen={isPolyglotOpen}
         onClose={() => setIsPolyglotOpen(false)}
         onSelectPrompt={(p) => {
-          onSendMessage(p);
+          setPendingCodePrompt(p);
+          setPendingCodeMedia(null);
+          setIsCodeOptionOpen(true);
         }}
         isDarkMode={isDarkMode}
         onOpenSandbox={(c, l) => {
@@ -1250,6 +1339,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
           setIsSandboxOpen(true);
         }}
         credits={credits}
+        isAdmin={effectiveIsAdmin}
         onDeductCredit={onDeductCredit}
         onOpenDailyCredits={onOpenDailyCredits}
       />
@@ -1262,7 +1352,12 @@ export const ChatView: React.FC<ChatViewProps> = ({
         initialLanguage={sandboxLanguage}
         isDarkMode={isDarkMode}
         onAskBossAiToFix={(brokenCode, errorMsg) => {
-          onSendMessage(`Please fix this runtime error in my ${sandboxLanguage.toUpperCase()} code:\n\nError: ${errorMsg}\n\nCode:\n\`\`\`${sandboxLanguage}\n${brokenCode}\n\`\`\``);
+          setPendingCodePrompt(
+            `Please fix this runtime error in my ${sandboxLanguage.toUpperCase()} code:\n\nError: ${errorMsg}\n\nCode:\n\`\`\`${sandboxLanguage}\n${brokenCode}\n\`\`\``
+          );
+          setPendingCodeMedia(null);
+          setIsSandboxOpen(false);
+          setIsCodeOptionOpen(true);
         }}
       />
     </div>

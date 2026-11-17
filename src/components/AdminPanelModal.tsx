@@ -89,7 +89,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                 <Activity className="w-4 h-4" />
                 <span>Inference Engine</span>
               </div>
-              <div className="text-sm font-semibold">Gemini 3.8 Flash</div>
+              <div className="text-sm font-semibold">Gemini 4 Hydrogen</div>
               <div className="text-[11px] opacity-60 mt-0.5">Hardware Accelerated</div>
             </div>
 
@@ -100,8 +100,8 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                 <Server className="w-4 h-4" />
                 <span>Quota Level</span>
               </div>
-              <div className="text-sm font-semibold text-emerald-400">Unlimited (Free)</div>
-              <div className="text-[11px] opacity-60 mt-0.5">Priority Queue VIP</div>
+              <div className="text-sm font-semibold text-emerald-400">∞ Unlimited Credits</div>
+              <div className="text-[11px] opacity-60 mt-0.5">Admin Root VIP Access</div>
             </div>
           </div>
 

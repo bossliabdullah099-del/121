@@ -41,8 +41,36 @@ export const HOURLY_REQUIRED_SECONDS = 3600; // 1 hour of active time spent usin
 
 export const DEFAULT_INITIAL_CREDITS = 0; // Starts with zero credit on guest and signin
 
+export const ADMIN_EMAIL = 'bossliabdullah099@gmail.com';
+
+export function isAdminUser(user?: { isSuperAdmin?: boolean; role?: string; email?: string } | null): boolean {
+  if (!user) return false;
+  if (user.isSuperAdmin === true) return true;
+  if (user.role === 'admin') return true;
+  if ((user.email || '').trim().toLowerCase() === ADMIN_EMAIL) return true;
+  return false;
+}
+
+export function hasEnoughCredits(
+  credits: number,
+  required = 1,
+  user?: { isSuperAdmin?: boolean; role?: string; email?: string } | null
+): boolean {
+  if (isAdminUser(user)) return true;
+  return credits >= required;
+}
+
+export function formatCreditsBadge(
+  credits: number,
+  user?: { isSuperAdmin?: boolean; role?: string; email?: string } | null
+): string {
+  if (isAdminUser(user)) return '∞ Unlimited';
+  return `${credits} CR`;
+}
+
 export function isGuestUser(user?: { isGuest?: boolean; role?: string; email?: string } | null): boolean {
   if (!user) return true;
+  if (isAdminUser(user)) return false;
   if (user.isGuest) return true;
   if (user.role === 'guest') return true;
   if ((user.email || '').trim().toLowerCase() === 'guest@bossai.com') return true;

@@ -29,6 +29,7 @@ import {
   getHourlyProgressPercent,
   getHourlyMissionProgress,
   isGuestUser,
+  isAdminUser,
 } from '../lib/credits';
 import { User } from '../types';
 
@@ -71,6 +72,7 @@ export const DailyCreditModal: React.FC<DailyCreditModalProps> = ({
 
   if (!isOpen) return null;
 
+  const isAdmin = isAdminUser(currentUser);
   const isGuest = isGuestUser(currentUser);
   const canCheckInToday = isDailyCheckInAvailable(creditState, currentUser);
   const canClaimHourly = isHourlyClaimAvailable(creditState);
@@ -151,7 +153,7 @@ export const DailyCreditModal: React.FC<DailyCreditModalProps> = ({
               }`}
             >
               <Coins className="w-3.5 h-3.5 text-amber-500" />
-              <span>{creditState.credits} Credits</span>
+              <span>{isAdmin ? '∞ Unlimited (Admin)' : `${creditState.credits} Credits`}</span>
             </div>
 
             <button

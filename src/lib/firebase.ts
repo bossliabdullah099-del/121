@@ -2,25 +2,22 @@ import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
   initializeFirestore,
   getFirestore,
+  disableNetwork,
+  enableNetwork,
   collection,
   doc,
   setDoc,
-  getDoc,
+  getDocFromServer,
   getDocs,
   deleteDoc,
   query,
   where,
   orderBy,
   limit,
-  onSnapshot,
 } from 'firebase/firestore';
 import {
   getAuth,
-  signInWithPopup,
   GoogleAuthProvider,
-  signOut as firebaseSignOut,
-  onAuthStateChanged,
-  signInAnonymously,
 } from 'firebase/auth';
 import firebaseConfigJson from '../../firebase-applet-config.json';
 import { ImageJob, ChatConversation } from '../types';
@@ -37,7 +34,7 @@ const firebaseConfig = {
 // Initialize Firebase App
 export const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 
-// Initialize Firestore with specific custom database ID and experimentalForceLongPolling to prevent WebChannel 10s timeouts in iframe environments
+// Initialize Firestore with the provisioned custom database ID and auto-detect long polling
 const databaseId = (firebaseConfigJson as any).firestoreDatabaseId || '(default)';
 
 export const db = (() => {
@@ -45,12 +42,12 @@ export const db = (() => {
     return initializeFirestore(
       app,
       {
-        experimentalForceLongPolling: true,
+        experimentalAutoDetectLongPolling: true,
+        ignoreUndefinedProperties: true,
       },
       databaseId
     );
-  } catch (e) {
-    // If already initialized with different options, return existing instance
+  } catch {
     return getFirestore(app, databaseId);
   }
 })();
@@ -85,14 +82,42 @@ export interface FirestoreErrorInfo {
   };
 }
 
+// Connection state cache so unreachable/offline networks never trigger Firestore's 10s timeout console error
+let firestoreReachableStatus: 'unknown' | 'online' | 'offline' = 'unknown';
+let lastReachabilityCheckAt = 0;
+let pendingReachabilityPromise: Promise<boolean> | null = null;
+
+const ONLINE_CACHE_TTL_MS = 30000;
+const OFFLINE_CACHE_TTL_MS = 20000;
+
+function markFirestoreOffline() {
+  firestoreReachableStatus = 'offline';
+  lastReachabilityCheckAt = Date.now();
+  disableNetwork(db).catch(() => {});
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('offline', () => {
+    markFirestoreOffline();
+  });
+  window.addEventListener('online', () => {
+    firestoreReachableStatus = 'unknown';
+    lastReachabilityCheckAt = 0;
+  });
+}
+
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
   const errMessage = error instanceof Error ? error.message : String(error);
-  // If the client is operating in offline mode or network timed out, handle gracefully
+  const errCode = (error as any)?.code || '';
   if (
+    errCode === 'unavailable' ||
+    errCode === 'deadline-exceeded' ||
     errMessage.includes('offline') ||
     errMessage.includes('Could not reach Cloud Firestore backend') ||
-    errMessage.includes('timed out')
+    errMessage.includes('timed out') ||
+    errMessage.includes('unavailable')
   ) {
+    markFirestoreOffline();
     console.warn(`[Firestore Offline Mode] Operation ${operationType} on ${path}: operating offline.`);
     return;
   }
@@ -117,39 +142,136 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 }
 
 /**
- * Executes a promise with an automatic timeout to prevent 10s hangs when offline
+ * Executes a promise with an automatic timeout before Firestore's 10s OnlineStateTimeout fires.
+ * If the operation times out, transitions Firestore to offline mode to cancel pending background streams.
  */
-export async function withTimeout<T>(promise: Promise<T>, timeoutMs: number = 4000, fallbackValue: T): Promise<T> {
-  let timer: any;
+export async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number = 5000,
+  fallbackValue: T,
+  disableOnTimeout: boolean = true
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let settled = false;
+
   const timeoutPromise = new Promise<T>((resolve) => {
     timer = setTimeout(() => {
-      resolve(fallbackValue);
+      if (!settled) {
+        settled = true;
+        if (disableOnTimeout) {
+          markFirestoreOffline();
+        }
+        resolve(fallbackValue);
+      }
     }, timeoutMs);
   });
 
-  try {
-    const result = await Promise.race([promise, timeoutPromise]);
-    clearTimeout(timer);
-    return result;
-  } catch (error) {
-    clearTimeout(timer);
-    return fallbackValue;
+  const wrappedPromise = promise
+    .then((res) => {
+      if (!settled) {
+        settled = true;
+        if (timer !== undefined) clearTimeout(timer);
+      }
+      return res;
+    })
+    .catch(() => {
+      if (!settled) {
+        settled = true;
+        if (timer !== undefined) clearTimeout(timer);
+      }
+      return fallbackValue;
+    });
+
+  return Promise.race([wrappedPromise, timeoutPromise]);
+}
+
+/**
+ * Verifies HTTPS & Firestore SDK backend reachability in <4.5s so blocked/offline clients
+ * disable Firestore network cleanly BEFORE Firestore's 10s OnlineStateTracker error fires.
+ */
+export async function ensureFirestoreReachable(timeoutMs: number = 3500): Promise<boolean> {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    markFirestoreOffline();
+    return false;
   }
+
+  const now = Date.now();
+  if (firestoreReachableStatus === 'online' && now - lastReachabilityCheckAt < ONLINE_CACHE_TTL_MS) {
+    return true;
+  }
+  if (firestoreReachableStatus === 'offline' && now - lastReachabilityCheckAt < OFFLINE_CACHE_TTL_MS) {
+    return false;
+  }
+
+  if (pendingReachabilityPromise) {
+    return pendingReachabilityPromise;
+  }
+
+  pendingReachabilityPromise = (async () => {
+    try {
+      // 1. Fast REST reachability probe (no WebChannel watch stream opened if unreachable)
+      const controller = new AbortController();
+      const fetchTimer = setTimeout(() => controller.abort(), timeoutMs);
+      const probeUrl = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/${encodeURIComponent(databaseId)}/documents/test/connection?key=${firebaseConfig.apiKey}`;
+
+      let restOk = false;
+      try {
+        const res = await fetch(probeUrl, {
+          method: 'GET',
+          signal: controller.signal,
+          cache: 'no-store',
+        });
+        // 200, 404 (doc missing), 403 (rules) all prove live backend connectivity
+        restOk = res.status < 500;
+      } catch {
+        restOk = false;
+      } finally {
+        clearTimeout(fetchTimer);
+      }
+
+      if (!restOk) {
+        markFirestoreOffline();
+        return false;
+      }
+
+      // 2. Ensure Firestore SDK network is enabled and validate connection with getDocFromServer (<4.5s)
+      await enableNetwork(db).catch(() => {});
+
+      const sdkCheck = getDocFromServer(doc(db, 'test', 'connection'))
+        .then(() => true)
+        .catch((err: any) => {
+          const code = err?.code || '';
+          const msg = err?.message || '';
+          if (code === 'unavailable' || msg.includes('offline') || msg.includes('Could not reach')) {
+            return false;
+          }
+          // permission-denied or not-found proves the server responded
+          return true;
+        });
+
+      const sdkOk = await withTimeout(sdkCheck, 4500, false, true);
+      if (sdkOk) {
+        firestoreReachableStatus = 'online';
+        lastReachabilityCheckAt = Date.now();
+        return true;
+      }
+
+      markFirestoreOffline();
+      return false;
+    } catch {
+      markFirestoreOffline();
+      return false;
+    } finally {
+      pendingReachabilityPromise = null;
+    }
+  })();
+
+  return pendingReachabilityPromise;
 }
 
 // Connection health test helper with short timeout
-export async function testFirestoreConnection(timeoutMs: number = 3000): Promise<boolean> {
-  try {
-    const checkPromise = getDoc(doc(db, 'test', 'connection'));
-    const success = await withTimeout(
-      checkPromise.then(() => true).catch(() => true), // Document missing still means network connection reached
-      timeoutMs,
-      false
-    );
-    return success;
-  } catch (error: any) {
-    return false;
-  }
+export async function testFirestoreConnection(timeoutMs: number = 3500): Promise<boolean> {
+  return ensureFirestoreReachable(timeoutMs);
 }
 
 /**
@@ -178,10 +300,27 @@ export function sanitizeForFirestore<T>(data: T): T {
 }
 
 /**
+ * Keeps inline base64 payloads from exceeding Firestore's 1MB document limit
+ */
+function stripOversizedDataUri(value?: string, maxLen: number = 180000): string | undefined {
+  if (!value || typeof value !== 'string') return value;
+  if (value.startsWith('data:') && value.length > maxLen) {
+    return undefined;
+  }
+  return value;
+}
+
+/**
  * Save an AI-generated image to Firestore database
  */
 export async function saveImageToFirestore(image: ImageJob, userId?: string): Promise<boolean> {
   try {
+    if (image.imageUrl && image.imageUrl.startsWith('data:') && image.imageUrl.length > 850000) {
+      return false;
+    }
+    const online = await ensureFirestoreReachable();
+    if (!online) return false;
+
     const imageDocRef = doc(db, 'images', image.id);
     const payload = sanitizeForFirestore({
       id: image.id,
@@ -199,7 +338,7 @@ export async function saveImageToFirestore(image: ImageJob, userId?: string): Pr
     });
 
     const writePromise = setDoc(imageDocRef, payload, { merge: true }).then(() => true);
-    return await withTimeout(writePromise, 4000, true);
+    return await withTimeout(writePromise, 5000, false);
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `images/${image.id}`);
     return false;
@@ -211,6 +350,9 @@ export async function saveImageToFirestore(image: ImageJob, userId?: string): Pr
  */
 export async function fetchImagesFromFirestore(userId?: string): Promise<ImageJob[]> {
   try {
+    const online = await ensureFirestoreReachable();
+    if (!online) return [];
+
     const imagesRef = collection(db, 'images');
     let q;
     if (userId && userId !== 'anonymous') {
@@ -239,7 +381,7 @@ export async function fetchImagesFromFirestore(userId?: string): Promise<ImageJo
       return images;
     });
 
-    return await withTimeout(fetchPromise, 4000, []);
+    return await withTimeout(fetchPromise, 5000, []);
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, 'images');
     return [];
@@ -251,8 +393,11 @@ export async function fetchImagesFromFirestore(userId?: string): Promise<ImageJo
  */
 export async function deleteImageFromFirestore(imageId: string): Promise<boolean> {
   try {
+    const online = await ensureFirestoreReachable();
+    if (!online) return false;
+
     const deletePromise = deleteDoc(doc(db, 'images', imageId)).then(() => true);
-    return await withTimeout(deletePromise, 4000, true);
+    return await withTimeout(deletePromise, 5000, false);
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, `images/${imageId}`);
     return false;
@@ -271,6 +416,9 @@ export async function syncUserWithFirestore(user: {
   plan?: string;
 }): Promise<boolean> {
   try {
+    const online = await ensureFirestoreReachable();
+    if (!online) return false;
+
     const userRef = doc(db, 'users', user.id);
     const payload = sanitizeForFirestore({
       id: user.id,
@@ -283,7 +431,7 @@ export async function syncUserWithFirestore(user: {
       createdAt: new Date().toISOString(),
     });
     const syncPromise = setDoc(userRef, payload, { merge: true }).then(() => true);
-    return await withTimeout(syncPromise, 4000, true);
+    return await withTimeout(syncPromise, 5000, false);
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `users/${user.id}`);
     return false;
@@ -310,9 +458,12 @@ export async function saveConversationToFirestore(
       return false;
     }
 
+    const online = await ensureFirestoreReachable();
+    if (!online) return false;
+
     const convRef = doc(db, 'conversations', conversation.id);
 
-    // Explicitly clean messages and ensure no undefined values exist
+    // Explicitly clean messages, remove undefined values, and strip oversized inline base64 media (>180KB)
     const rawMessages = Array.isArray(conversation.messages) ? conversation.messages : [];
     const cleanMessages = rawMessages.map((msg) => {
       const entry: Record<string, any> = {
@@ -323,10 +474,18 @@ export async function saveConversationToFirestore(
       };
       if (msg.modelUsed) entry.modelUsed = msg.modelUsed;
       if (msg.mediaType) entry.mediaType = msg.mediaType;
-      if (msg.mediaData) entry.mediaData = msg.mediaData;
-      if (msg.attachedImage) entry.attachedImage = msg.attachedImage;
-      if (msg.attachedVideo) entry.attachedVideo = msg.attachedVideo;
-      if (msg.attachedMedia) entry.attachedMedia = msg.attachedMedia;
+      const safeMediaData = stripOversizedDataUri(msg.mediaData);
+      if (safeMediaData) entry.mediaData = safeMediaData;
+      const safeAttachedImg = stripOversizedDataUri(msg.attachedImage);
+      if (safeAttachedImg) entry.attachedImage = safeAttachedImg;
+      const safeAttachedVid = stripOversizedDataUri(msg.attachedVideo);
+      if (safeAttachedVid) entry.attachedVideo = safeAttachedVid;
+      if (msg.attachedMedia) {
+        const safeUrl = stripOversizedDataUri(msg.attachedMedia.url);
+        if (safeUrl) {
+          entry.attachedMedia = { ...msg.attachedMedia, url: safeUrl };
+        }
+      }
       return sanitizeForFirestore(entry);
     });
 
@@ -342,7 +501,7 @@ export async function saveConversationToFirestore(
     });
 
     const savePromise = setDoc(convRef, docPayload, { merge: true }).then(() => true);
-    return await withTimeout(savePromise, 4000, true);
+    return await withTimeout(savePromise, 5000, false);
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `conversations/${conversation.id}`);
     return false;
@@ -363,6 +522,9 @@ export async function fetchConversationsFromFirestore(
     if (!cleanEmail || cleanEmail === 'guest@bossai.com' || (userId && userId.startsWith('guest_'))) {
       return [];
     }
+
+    const online = await ensureFirestoreReachable();
+    if (!online) return [];
 
     const convRef = collection(db, 'conversations');
     let q;
@@ -392,7 +554,7 @@ export async function fetchConversationsFromFirestore(
       return conversations.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
     });
 
-    return await withTimeout(fetchPromise, 4000, []);
+    return await withTimeout(fetchPromise, 5000, []);
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, 'conversations');
     return [];
@@ -404,8 +566,11 @@ export async function fetchConversationsFromFirestore(
  */
 export async function deleteConversationFromFirestore(conversationId: string): Promise<boolean> {
   try {
+    const online = await ensureFirestoreReachable();
+    if (!online) return false;
+
     const deletePromise = deleteDoc(doc(db, 'conversations', conversationId)).then(() => true);
-    return await withTimeout(deletePromise, 4000, true);
+    return await withTimeout(deletePromise, 5000, false);
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, `conversations/${conversationId}`);
     return false;
@@ -420,11 +585,14 @@ export async function renameConversationInFirestore(
   newTitle: string
 ): Promise<boolean> {
   try {
+    const online = await ensureFirestoreReachable();
+    if (!online) return false;
+
     const convRef = doc(db, 'conversations', conversationId);
     const renamePromise = setDoc(convRef, { title: newTitle, updatedAt: Date.now() }, { merge: true }).then(
       () => true
     );
-    return await withTimeout(renamePromise, 4000, true);
+    return await withTimeout(renamePromise, 5000, false);
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, `conversations/${conversationId}`);
     return false;
